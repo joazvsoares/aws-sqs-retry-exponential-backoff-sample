@@ -1,0 +1,69 @@
+service: aws-sqs-retry
+
+provider:
+  name: aws
+  runtime: python3.8
+  region: us-east-1
+  environment:
+    QUEUE_URL:
+      Fn::Join:
+        - ""
+        - - "https://sqs."
+          - ${opt:region, self:provider.region}
+          - ".amazonaws.com/"
+          - Ref: "AWS::AccountId"
+          - "/my-fifo-queue.fifo"
+  iam:
+    role:
+      statements:
+        - Effect: "Allow"
+          Action:
+            - "sqs:SendMessage"
+            - "sqs:ReceiveMessage"
+            - "sqs:DeleteMessage"
+            - "sqs:GetQueueAttributes"
+            - "sqs:ChangeMessageVisibility"
+          Resource:
+            Fn::Join:
+              - ""
+              - - "arn:aws:sqs:"
+                - ${opt:region, self:provider.region} # Region
+                - ":"
+                - Ref: "AWS::AccountId" # AWS Account ID
+                - ":my-fifo-queue.fifo" # SQS Queue Name
+
+functions:
+  consumer:
+    handler: consumer.handler
+    events:
+      - sqs:
+          arn:
+            Fn::GetAtt:
+              - MyFifoQueue
+              - Arn
+          batchSize: 1 # You can adjust the batchSize as needed
+          functionResponseType: ReportBatchItemFailures
+
+  producer:
+    handler: producer.handler
+
+resources:
+  Resources:
+    MyFifoQueue:
+      Type: AWS::SQS::Queue
+      Properties:
+        QueueName: "my-fifo-queue.fifo"
+        FifoQueue: true
+        ContentBasedDeduplication: true
+        RedrivePolicy:
+          deadLetterTargetArn:
+            Fn::GetAtt:
+              - MyDeadLetterQueue
+              - Arn
+          maxReceiveCount: 10
+    MyDeadLetterQueue:
+      Type: AWS::SQS::Queue
+      Properties:
+        QueueName: "my-dead-letter-queue.fifo"
+        FifoQueue: true
+        ContentBasedDeduplication: true
